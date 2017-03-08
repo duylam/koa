@@ -1,8 +1,10 @@
 
 'use strict';
 
+const assert = require('assert');
 const request = require('supertest');
 const Koa = require('../..');
+const context = require('../helpers/context');
 
 describe('ctx.onerror(err)', () => {
   it('should respond', done => {
@@ -86,6 +88,29 @@ describe('ctx.onerror(err)', () => {
     });
   });
 
+  it('should ignore error after headerSent', done => {
+    const app = new Koa();
+
+    app.on('error', err => {
+      err.message.should.equal('mock error');
+      err.headerSent.should.equal(true);
+      done();
+    });
+
+    app.use(async ctx => {
+      ctx.status = 200;
+      ctx.set('X-Foo', 'Bar');
+      ctx.flushHeaders();
+      await Promise.reject(new Error('mock error'));
+      ctx.body = 'response';
+    });
+
+    request(app.listen())
+    .get('/')
+    .expect('X-Foo', 'Bar')
+    .expect(200, () => {});
+  });
+
   describe('when invalid err.status', () => {
     describe('not number', () => {
       it('should respond 500', done => {
@@ -146,5 +171,23 @@ describe('ctx.onerror(err)', () => {
         .expect('Content-Type', 'text/plain; charset=utf-8')
         .expect('Internal Server Error', done);
     });
+
+    it('should use res.getHeaderNames() accessor when available', () => {
+      let removed = 0;
+      const ctx = context();
+
+      ctx.app.emit = () => {};
+      ctx.res = {
+        getHeaderNames: () => ['content-type', 'content-length'],
+        removeHeader: () => removed++,
+        end: () => {},
+        emit: () => {}
+      };
+
+      ctx.onerror(new Error('error'));
+
+      assert.equal(removed, 2);
+    });
   });
 });
+
